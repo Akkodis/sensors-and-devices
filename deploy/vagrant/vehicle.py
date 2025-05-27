@@ -1,74 +1,47 @@
-
-
 from __future__ import print_function
-
-from proton.handlers import MessagingHandler
+from py5gmeta.activemq.amqp import  VideoReceiver
 from proton.reactor import Container
 import carla
 import random
-import os
 import sys
-import time
-import numpy
 import gi
+from gi.repository import Gst, GObject, GLib, GstApp, GstVideo
+
+
+pts = 0  # buffers presentation timestamp
 gi.require_version('GLib', '2.0')
 gi.require_version('GObject', '2.0')
 gi.require_version('Gst', '1.0')
 gi.require_version('GstApp', '1.0')
 gi.require_version('GstVideo', '1.0')
 
-from gi.repository import Gst, GObject, GLib, GstApp, GstVideo
-
-import address
-
-pts = 0  # buffers presentation timestamp
-
-class Receiver(MessagingHandler):
-    def __init__(self, url):
-        super(Receiver, self).__init__()
-        self.url = url
-        self._messages_actually_received = 0
-        self._stopping = False
-
-    def on_start(self, event):
-        print("Receiver Created")
-        event.container.create_receiver(self.url)
-
-    def on_message(self, event):
-        global pts
-        global duration
-
-        if self._stopping:
-            return
-
-        print(event.message.properties['body_size'])
-        print(
-            "Received frame Content-Type: video/x-h264 of size {size}".format(size=event.message.properties['body_size']))
-        # Change this number (54) with the Id you wand to debug from logs
-        if (event.message.properties['sourceId'] == 54):
-            gst_buffer = Gst.Buffer.new_allocate(None, int(event.message.properties['body_size']), None)
-            gst_buffer.fill(0, event.message.body)
-
-            # set pts and duration to be able to record video, calculate fps
-            framerate = float(event.message.properties['dataSampleRate'])
-            duration = 10**9 / (int(framerate / 1.0))  # frame duration
-
-            pts += duration  # Increase pts by duration
-            gst_buffer.pts = pts
-            gst_buffer.duration = duration
-
-            # emit <push-buffer> event with Gst.Buffer
-            appsrc.emit("push-buffer", gst_buffer)
-
-        self._messages_actually_received += 1
-        #event.connection.close()
-        #self._stopping = True
-
-    def on_transport_error(self, event):
-        raise Exception(event.transport.condition)
-
 
 if __name__ == "__main__":
+
+    client = carla.Client("192.168.12.3", 2000)
+    client.load_world('Town05')
+    world = client.get_world()
+    spectator = world.get_spectator()
+    transform = spectator.get_transform()
+    location = transform.location
+    rotation = transform.rotation
+
+    # Set the spectator with an empty transform
+    spectator.set_transform(carla.Transform())
+    # This will set the spectator at the origin of the map, with 0 degrees
+    # pitch, yaw and roll - a good way to orient yourself in the ma
+    vehicle_blueprints = world.get_blueprint_library().filter('*vehicle*')
+    spawn_points = world.get_map().get_spawn_points()
+    for i in range(0, 50):
+        world.try_spawn_actor(random.choice(vehicle_blueprints), random.choice(spawn_points))
+    ego_vehicle = world.spawn_actor(random.choice(vehicle_blueprints), random.choice(spawn_points))
+    # Create a transform to place the camera on top of the vehicle
+    camera_init_trans = carla.Transform(carla.Location(z=1.5))
+    # We create the camera through a blueprint that defines its properties
+    camera_bp = world.get_blueprint_library().find('sensor.camera.rgb')
+
+    # We spawn the camera and attach it to our ego vehicle
+    camera = world.spawn_actor(camera_bp, camera_init_trans, attach_to=ego_vehicle)
 
     appsrc = None
 
@@ -100,36 +73,10 @@ if __name__ == "__main__":
         exit(-1)
 
     print("Container RECEIVER")
-    Container(Receiver(address.url)).run()
+    Container(VideoReceiver(url)).run()
 
     # wait until EOS or error
     bus = pipeline.get_bus()
 
     # free resources
     pipeline.set_state(Gst.State.NULL)
-
-if __name__ == "__main__" :
-        client = carla.Client("192.168.12.3", 2000)
-        client.load_world('Town05')
-        world = client.get_world()
-        spectator = world.get_spectator()
-        transform = spectator.get_transform()
-        location = transform.location
-        rotation = transform.rotation
-
-        # Set the spectator with an empty transform
-        spectator.set_transform(carla.Transform())
-        # This will set the spectator at the origin of the map, with 0 degrees
-        # pitch, yaw and roll - a good way to orient yourself in the ma
-        vehicle_blueprints = world.get_blueprint_library().filter('*vehicle*')
-        spawn_points = world.get_map().get_spawn_points()
-        for i in range(0, 50):
-            world.try_spawn_actor(random.choice(vehicle_blueprints), random.choice(spawn_points))
-        ego_vehicle = world.spawn_actor(random.choice(vehicle_blueprints), random.choice(spawn_points))
-        # Create a transform to place the camera on top of the vehicle
-        camera_init_trans = carla.Transform(carla.Location(z=1.5))
-        # We create the camera through a blueprint that defines its properties
-        camera_bp = world.get_blueprint_library().find('sensor.camera.rgb')
-
-        # We spawn the camera and attach it to our ego vehicle
-        camera = world.spawn_actor(camera_bp, camera_init_trans, attach_to=ego_vehicle)
